@@ -10,6 +10,7 @@
 #include <sstream>
 #include <cctype>
 #include <cstdlib>
+#include <ctime>
 
 using namespace std;
 
@@ -18,6 +19,7 @@ const int CENTER_COUNT = 2;
 const int INF = numeric_limits<int>::max();
 
 const string DATA_FILE = "evacuees.txt";
+const string ROUTES_FILE = "routes.txt";
 
 const int COURSE_COUNT = 4;
 const string COURSES[COURSE_COUNT] = {"BSIT", "BEED", "BSED", "BSBA"};
@@ -45,8 +47,6 @@ string toUpper(string s) {
     return s;
 }
 
-// Reads a whole line and only accepts a number from minValue to maxValue.
-// Letters, symbols, blanks, or out-of-range numbers show an error and ask again.
 int readInt(const string& prompt, int minValue, int maxValue) {
 
     string line;
@@ -98,7 +98,6 @@ int readInt(const string& prompt, int minValue, int maxValue) {
     }
 }
 
-// Only accepts y or n.
 bool askYesNo(const string& prompt) {
 
     string line;
@@ -122,6 +121,40 @@ bool askYesNo(const string& prompt) {
 
         cout << "Error: Please enter only y or n.\n";
     }
+}
+
+string readText(const string& prompt) {
+
+    string line;
+
+    while (true) {
+
+        cout << prompt;
+
+        if (!getline(cin, line)) {
+            cout << "\nInput closed. Exiting.\n";
+            exit(0);
+        }
+
+        size_t first = line.find_first_not_of(" \t\r");
+        size_t last = line.find_last_not_of(" \t\r");
+
+        if (first == string::npos) {
+            cout << "Error: Input cannot be empty.\n";
+            continue;
+        }
+
+        return line.substr(first, last - first + 1);
+    }
+}
+
+string fit(const string& text, size_t width) {
+
+    if (text.size() <= width) {
+        return text;
+    }
+
+    return text.substr(0, width - 2) + "..";
 }
 
 struct Center {
@@ -259,13 +292,13 @@ void showLocations() {
     }
 }
 
-void saveEvacuees() {
+bool saveEvacuees(const string& filename = DATA_FILE) {
 
-    ofstream file(DATA_FILE);
+    ofstream file(filename);
 
     if (!file) {
         cout << "Error saving records!\n";
-        return;
+        return false;
     }
 
     for (const Evacuee& e : evacuees) {
@@ -280,6 +313,8 @@ void saveEvacuees() {
     }
 
     file.close();
+
+    return true;
 }
 
 void loadEvacuees() {
@@ -308,8 +343,7 @@ void loadEvacuees() {
                  >> e.center)) {
             continue;
         }
-
-        // Older records have no course/section fields
+        
         if (!(in >> quoted(e.course) >> quoted(e.section))) {
             e.course = "N/A";
             e.section = "N/A";
@@ -344,6 +378,59 @@ void loadEvacuees() {
     }
 
     file.close();
+}
+
+void saveRoutes() {
+
+    ofstream file(ROUTES_FILE);
+
+    if (!file) {
+        cout << "Error saving route status!\n";
+        return;
+    }
+
+    for (int a = 0; a < LOCATIONS; a++) {
+        for (const Edge& edge : graph[a]) {
+        if (edge.blocked && a < edge.destination) {
+                file << a << " " << edge.destination << "\n";
+            }
+        }
+    }
+}
+
+void loadRoutes() {
+
+    ifstream file(ROUTES_FILE);
+
+    if (!file) {
+        return;
+    }
+
+    int a, b;
+    int restored = 0;
+
+    while (file >> a >> b) {
+
+        if (a < 0 || a >= LOCATIONS || b < 0 || b >= LOCATIONS) {
+            continue;
+        }
+
+        int forward = findEdge(a, b);
+        int backward = findEdge(b, a);
+
+        if (forward == -1 || backward == -1) {
+            continue;
+        }
+
+        graph[a][forward].blocked = true;
+        graph[b][backward].blocked = true;
+        restored++;
+    }
+
+    if (restored > 0) {
+        cout << restored << " blocked route(s) restored from "
+             << ROUTES_FILE << ".\n";
+    }
 }
 
 vector<int> findShortestPath(
@@ -397,6 +484,7 @@ vector<int> findShortestPath(
     }
 
     totalDistance = distance[destination];
+
     vector<int> path;
 
     if (totalDistance == INF) {
@@ -413,6 +501,34 @@ vector<int> findShortestPath(
     reverse(path.begin(), path.end());
 
     return path;
+}
+
+int recommendCenter(int start, int& bestDistance) {
+
+    int best = -1;
+    bestDistance = INF;
+
+    for (int i = 0; i < CENTER_COUNT; i++) {
+
+        if (centers[i].occupants >= centers[i].capacity) {
+            continue;
+        }
+
+        int distance;
+
+        vector<int> path = findShortestPath(
+            start,
+            centers[i].location,
+            distance
+        );
+
+        if (!path.empty() && distance < bestDistance) {
+            bestDistance = distance;
+            best = i;
+        }
+    }
+
+    return best;
 }
 
 void findEvacuationRoute(int start) {
@@ -565,39 +681,63 @@ void displayEvacuees() {
         return;
     }
 
-    for (int i = 0; i < evacuees.size(); i++) {
+    const string line(93, '-');
 
-        cout << "\nRecord #" << i + 1 << "\n";
+    cout << "\n" << line << "\n";
+    cout << left
+         << setw(5) << "No."
+         << setw(12) << "ID"
+         << setw(21) << "Name"
+         << setw(8) << "Course"
+         << setw(7) << "Sect."
+         << setw(23) << "Last Location"
+         << setw(11) << "Status"
+         << "Center" << "\n";
+    cout << line << "\n";
 
-        cout << "ID: "
-             << evacuees[i].id << "\n";
+    int evacuatedCount = 0;
 
-        cout << "Name: "
-             << evacuees[i].name << "\n";
+    for (int i = 0; i < (int)evacuees.size(); i++) {
 
-        cout << "Course: "
-             << evacuees[i].course << "\n";
+        const Evacuee& e = evacuees[i];
 
-        cout << "Section: "
-             << evacuees[i].section << "\n";
+        if (e.evacuated) {
+            evacuatedCount++;
+        }
 
-        cout << "Location: "
-             << places[evacuees[i].location] << "\n";
-
-        cout << "Status: "
-             << (evacuees[i].evacuated
-                 ? "Evacuated"
-                 : "Not Yet Confirmed Evacuated")
+        cout << left
+             << setw(5) << i + 1
+             << setw(12) << fit(e.id, 11)
+             << setw(21) << fit(e.name, 20)
+             << setw(8) << fit(e.course, 7)
+             << setw(7) << fit(e.section, 6)
+             << setw(23) << fit(places[e.location], 22)
+             << setw(11) << (e.evacuated ? "Evacuated" : "Pending")
+             << (e.center >= 0 ? "C" + to_string(e.center + 1)
+                               : string("-"))
              << "\n";
+    }
 
-        if (evacuees[i].center >= 0) {
+    cout << line << "\n";
 
-            cout << "Center: "
-                 << places[
-                     centers[evacuees[i].center].location
-                 ] << "\n";
+    cout << "Total: " << evacuees.size()
+         << " | Evacuated: " << evacuatedCount
+         << " | Pending: " << (int)evacuees.size() - evacuatedCount
+         << "\n";
+
+    cout << "Centers: ";
+
+    for (int i = 0; i < CENTER_COUNT; i++) {
+
+        cout << "C" << i + 1 << " = "
+             << places[centers[i].location];
+
+        if (i < CENTER_COUNT - 1) {
+            cout << ", ";
         }
     }
+
+    cout << "\n";
 }
 
 void updateRouteStatus() {
@@ -634,6 +774,8 @@ void updateRouteStatus() {
     graph[a][edgeIndex].blocked = (status == 1);
     graph[b][reverseIndex].blocked = (status == 1);
 
+    saveRoutes();
+
     cout << "\nRoute "
          << (status == 1 ? "blocked" : "reopened")
          << " successfully!\n";
@@ -647,103 +789,126 @@ void markEvacuated() {
     }
 
     string id;
-
     cout << "\nEnter Evacuee ID: ";
     getline(cin, id);
-
+ 
     for (Evacuee& e : evacuees) {
-
+ 
         if (e.id != id) {
             continue;
         }
-
+ 
         if (e.evacuated) {
             cout << "Already marked as evacuated.\n";
             return;
         }
-
-        int centerChoice;
-
-        cout << "\nSelect the center where the person arrived:\n";
-
-        for (int i = 0; i < CENTER_COUNT; i++) {
-
-            cout << i + 1 << ". "
-                 << places[centers[i].location]
-                 << " (Available: "
-                 << centers[i].capacity
-                        - centers[i].occupants
-                 << ")\n";
+ 
+        int selected = -1;
+        int distanceToCenter = 0;
+ 
+        int recommended = recommendCenter(e.location, distanceToCenter);
+ 
+        if (recommended != -1) {
+ 
+            cout << "\nRecommended center (shortest open route from "
+                 << places[e.location] << "):\n";
+ 
+            cout << "  " << places[centers[recommended].location]
+                 << " - " << distanceToCenter << " meters, "
+                 << centers[recommended].capacity
+                        - centers[recommended].occupants
+                 << " space(s) available\n";
+ 
+            if (askYesNo("Did the person arrive at this center? (y/n): ")) {
+                selected = recommended;
+            }
+ 
+        } else {
+ 
+            cout << "\nNo open route to an available center was found from "
+                 << places[e.location] << ".\n";
         }
-
-        centerChoice = readInt("Enter center number: ", 1, CENTER_COUNT);
-
-        int selected = centerChoice - 1;
-
+ 
+        if (selected == -1) {
+ 
+            cout << "\nSelect the center where the person arrived:\n";
+ 
+            for (int i = 0; i < CENTER_COUNT; i++) {
+ 
+                cout << i + 1 << ". "
+                     << places[centers[i].location]
+                     << " (Available: "
+                     << centers[i].capacity
+                            - centers[i].occupants
+                     << ")\n";
+            }
+ 
+            selected = readInt("Enter center number: ", 1, CENTER_COUNT) - 1;
+        }
+ 
         if (centers[selected].occupants >=
             centers[selected].capacity) {
-
+ 
             cout << "Center is already full!\n";
             return;
         }
-
+ 
         e.evacuated = true;
         e.center = selected;
-
+ 
         centers[selected].occupants++;
-
+ 
         saveEvacuees();
-
+ 
         cout << "\nEvacuation status updated successfully!\n";
         cout << "Confirm the person's physical arrival first.\n";
-
+ 
         return;
     }
-
+ 
     cout << "Evacuee ID not found!\n";
 }
-
+ 
 void showCenterCapacity() {
-
+ 
     cout << "\n========== EVACUATION CENTER CAPACITY ==========\n";
-
+ 
     for (int i = 0; i < CENTER_COUNT; i++) {
-
+ 
         cout << "\nCenter: "
              << places[centers[i].location] << "\n";
-
+ 
         cout << "Capacity: "
              << centers[i].capacity << "\n";
-
+ 
         cout << "Recorded Occupants: "
              << centers[i].occupants << "\n";
-
+ 
         cout << "Available Spaces: "
              << centers[i].capacity
                     - centers[i].occupants << "\n";
     }
 }
-
+ 
 void showDepartmentSummary() {
-
+ 
     cout << "\n========== EVACUEES PER COURSE / SECTION ==========\n";
-
-    // course -> section -> indexes of evacuees
+ 
     map<string, map<string, vector<int>>> groups;
-
+ 
     for (const string& c : COURSES) {
-        groups[c];   // show every course, even with no evacuees
+        groups[c];   
     }
-
+ 
     for (int i = 0; i < evacuees.size(); i++) {
         groups[evacuees[i].course][evacuees[i].section].push_back(i);
     }
-
+ 
     for (const auto& courseEntry : groups) {
-
+ 
         int courseTotal = 0;
         int courseEvacuated = 0;
-
+ 
         for (const auto& sectionEntry : courseEntry.second) {
             for (int idx : sectionEntry.second) {
                 courseTotal++;
@@ -752,34 +917,34 @@ void showDepartmentSummary() {
                 }
             }
         }
-
+ 
         cout << "\n" << courseEntry.first
              << "  (Total: " << courseTotal
              << " | Evacuated: " << courseEvacuated
              << " | Not Yet Confirmed: "
              << courseTotal - courseEvacuated << ")\n";
-
+ 
         for (const auto& sectionEntry : courseEntry.second) {
-
+ 
             int total = sectionEntry.second.size();
             int done = 0;
-
+ 
             for (int idx : sectionEntry.second) {
                 if (evacuees[idx].evacuated) {
                     done++;
                 }
             }
-
+ 
             cout << "  Section " << sectionEntry.first
                  << ": " << done << "/" << total
                  << " evacuated\n";
-
+ 
             for (int idx : sectionEntry.second) {
-
+ 
                 if (evacuees[idx].evacuated) {
                     continue;
                 }
-
+ 
                 cout << "     - NOT CONFIRMED: "
                      << evacuees[idx].name
                      << " (" << evacuees[idx].id << ")"
@@ -789,89 +954,180 @@ void showDepartmentSummary() {
         }
     }
 }
-
-void deleteEvacuee() {
-
+ 
+void editEvacuee() {
+ 
     if (evacuees.empty()) {
         cout << "\nNo registered evacuees.\n";
         return;
     }
-
+ 
     string id;
-
+ 
+    cout << "\nEnter Evacuee ID to edit: ";
+    getline(cin, id);
+ 
+    for (Evacuee& e : evacuees) {
+ 
+        if (e.id != id) {
+            continue;
+        }
+ 
+        while (true) {
+ 
+            cout << "\n========== EDIT EVACUEE ==========\n";
+            cout << "ID (cannot be changed): " << e.id << "\n";
+            cout << "1. Name     : " << e.name << "\n";
+            cout << "2. Course   : " << e.course << "\n";
+            cout << "3. Section  : " << e.section << "\n";
+            cout << "4. Location : " << places[e.location] << "\n";
+            cout << "5. Done\n";
+ 
+            int field = readInt("Choose what to edit (1-5): ", 1, 5);
+ 
+            if (field == 5) {
+                break;
+            }
+ 
+            switch (field) {
+ 
+                case 1:
+                    e.name = readText("Enter new Full Name: ");
+                    break;
+ 
+                case 2: {
+ 
+                    cout << "\nSelect Course:\n";
+ 
+                    for (int i = 0; i < COURSE_COUNT; i++) {
+                        cout << i + 1 << ". " << COURSES[i] << "\n";
+                    }
+ 
+                    int courseChoice = readInt(
+                        "Enter course number: ", 1, COURSE_COUNT
+                    );
+ 
+                    e.course = COURSES[courseChoice - 1];
+                    break;
+                }
+ 
+                case 3:
+                    e.section = toUpper(readText("Enter new Section (e.g., 3A): "));
+                    break;
+ 
+                case 4:
+                    showLocations();
+                    e.location = readInt(
+                        "\nEnter new Location (1-16): ", 1, LOCATIONS
+                    ) - 1;
+                    break;
+            }
+ 
+            saveEvacuees();
+ 
+            cout << "Record updated and saved.\n";
+        }
+ 
+        return;
+    }
+ 
+    cout << "Evacuee ID not found!\n";
+}
+ 
+void deleteEvacuee() {
+ 
+    if (evacuees.empty()) {
+        cout << "\nNo registered evacuees.\n";
+        return;
+    }
+ 
+    string id;
+ 
     cout << "\nEnter Evacuee ID to delete: ";
     getline(cin, id);
-
+ 
     for (int i = 0; i < (int)evacuees.size(); i++) {
-
+ 
         if (evacuees[i].id != id) {
             continue;
         }
-
+ 
         if (!askYesNo("Delete " + evacuees[i].name
                       + " (" + evacuees[i].course + " "
                       + evacuees[i].section + ")? (y/n): ")) {
             cout << "Deletion cancelled.\n";
             return;
         }
-
-        // Free the space in the evacuation center
+ 
         if (evacuees[i].evacuated && evacuees[i].center >= 0) {
             centers[evacuees[i].center].occupants--;
         }
-
+ 
         evacuees.erase(evacuees.begin() + i);
-
+ 
         saveEvacuees();
-
+ 
         cout << "Record deleted successfully!\n";
         return;
     }
-
+ 
     cout << "Evacuee ID not found!\n";
 }
-
+ 
 void clearAllData() {
-
+ 
     if (evacuees.empty()) {
         cout << "\nThere is no saved data to delete.\n";
         return;
     }
-
+ 
     cout << "\nThis will permanently delete ALL "
          << evacuees.size() << " evacuee record(s).\n";
     cout << "Type YES to confirm: ";
-
+ 
     string confirm;
     getline(cin, confirm);
-
+ 
     if (confirm != "YES") {
         cout << "Cancelled. No data was deleted.\n";
         return;
     }
-
+ 
+    time_t now = time(nullptr);
+    char stamp[32];
+    strftime(stamp, sizeof(stamp), "%Y%m%d_%H%M%S", localtime(&now));
+ 
+    string backupName = string("evacuees_backup_") + stamp + ".txt";
+ 
+    if (!saveEvacuees(backupName)) {
+        cout << "Backup failed. No data was deleted.\n";
+        return;
+    }
+ 
+    cout << "Backup saved as " << backupName << "\n";
+ 
     evacuees.clear();
-
+ 
     for (int i = 0; i < CENTER_COUNT; i++) {
         centers[i].occupants = 0;
     }
-
+ 
     saveEvacuees();
-
+ 
     cout << "All saved data deleted.\n";
 }
-
+ 
 void showGraph() {
-
+ 
     cout << "\n========== WEIGHTED GRAPH ==========\n";
     cout << "Sample distances are in meters.\n";
-
+ 
     for (int i = 0; i < LOCATIONS; i++) {
-
+ 
         cout << "\n" << places[i] << ":\n";
-
+ 
         for (const Edge& edge : graph[i]) {
-
+ 
             cout << "  -> "
                  << places[edge.destination]
                  << " | Distance: "
@@ -882,21 +1138,22 @@ void showGraph() {
         }
     }
 }
-
+ 
 int main() {
-
+ 
     int choice;
-
+ 
     createGraph();
+    loadRoutes();
     loadEvacuees();
-
+ 
     do {
-
+ 
         cout << "\n";
         cout << "============================================\n";
         cout << "         NEUST EVACUATION SYSTEM\n";
         cout << "============================================\n";
-
+ 
         cout << "1. Show Visible Campus Map\n";
         cout << "2. Find Shortest Evacuation Route\n";
         cout << "3. Register Evacuee\n";
@@ -907,86 +1164,91 @@ int main() {
         cout << "8. Show Campus Locations\n";
         cout << "9. Show Weighted Graph\n";
         cout << "10. Show Evacuees per Course/Section\n";
-        cout << "11. Delete Evacuee Record\n";
-        cout << "12. Delete All Saved Data\n";
-        cout << "13. Exit\n";
-
+        cout << "11. Edit Evacuee Record\n";
+        cout << "12. Delete Evacuee Record\n";
+        cout << "13. Delete All Saved Data\n";
+        cout << "14. Exit\n";
+ 
         cout << "============================================\n";
-        choice = readInt("Enter your choice: ", 1, 13);
-
+        choice = readInt("Enter your choice: ", 1, 14);
+ 
         switch (choice) {
-
+ 
             case 1:
                 showMap();
                 break;
-
+ 
             case 2: {
-
+ 
                 int start;
-
+ 
                 showLocations();
-
+ 
                 start = readInt(
                     "\nEnter starting location (1-16): ", 1, LOCATIONS
                 );
-
+ 
                 findEvacuationRoute(start - 1);
-
+ 
                 break;
             }
-
+ 
             case 3:
                 registerEvacuee();
                 break;
-
+ 
             case 4:
                 displayEvacuees();
                 break;
-
+ 
             case 5:
                 updateRouteStatus();
                 break;
-
+ 
             case 6:
                 markEvacuated();
                 break;
-
+ 
             case 7:
                 showCenterCapacity();
                 break;
-
+ 
             case 8:
                 showLocations();
                 break;
-
+ 
             case 9:
                 showGraph();
                 break;
-
+ 
             case 10:
                 showDepartmentSummary();
                 break;
-
+ 
             case 11:
+                editEvacuee();
+                break;
+ 
+            case 12:
                 deleteEvacuee();
                 break;
-
-            case 12:
+ 
+            case 13:
                 clearAllData();
                 break;
-
-            case 13:
+ 
+            case 14:
                 saveEvacuees();
-
+ 
                 cout << "\nRecords saved.\n";
                 cout << "Exiting NEUST Evacuation System.\n";
                 break;
-
+ 
             default:
                 cout << "Invalid choice! Please try again.\n";
         }
-
-    } while (choice != 13);
-
+ 
+    } while (choice != 14);
+ 
     return 0;
 }
